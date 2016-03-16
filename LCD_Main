@@ -1,0 +1,240 @@
+module lcd_main_verilog (
+	input  CLK,					// 40Mhz 25ns
+	input  SBUSY,				//(slave busy) сигнал занятости подчиненного устройства
+	input  EW,					//можно писать
+	input [127:0] str_up,
+	input [127:0] str_down,
+	output reg [319:0] STR = 0,	//строка для вывода
+	output reg REFRESH = 0,		//обновление строки в LCD DRAM
+	output reg [7:0] INSTR = 0,	//инструкция LCD контроллеру
+	output reg [27:0] DELAY = 0,//задержка между инструкциями
+	output reg ONE_CYCLE = 0,	//(1) 4- или (0) 8-битная команда
+	output reg WRITE_COMMAND = 0,//,//запуск процесса загрузки команды в LCD
+	output reg IBUSY //я занят -1, не занят 0. Можно ли посылать команду замены строки
+);
+reg 		lcd_state  = 0;
+reg [3:0]  	init_state = 0;
+reg [3:0]  	exec_state = 0;
+reg			prev_but = 0;//для кнопки особо, чтоб не прыгали строки
+
+always @(posedge CLK) 
+
+begin
+	
+	case (lcd_state)
+		0: // Инициализация дисплея
+			case (init_state)
+			0: begin
+				if (~SBUSY) begin
+					INSTR = 8'b0011_XXXX;
+					DELAY = 28'h280A2; //28 разрядный регистр, мин зад. 4.1мс, такт 25 нс, => 164000 такта = 280A0 +2 в запас
+					ONE_CYCLE = 1'b1;
+					init_state <= 1;
+				end
+				IBUSY<=1;
+			end
+			1: begin
+				if (SBUSY) begin  
+					WRITE_COMMAND = 0;
+					init_state <= 2;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			2: begin
+				if (~SBUSY) begin  
+					INSTR = 8'b0011_XXXX;
+					DELAY = 28'hFA2; //28 разрядный регистр, мин зад. 100мкс, такт 25 нс, => 4000 такта = FA0 +2 в запас
+					ONE_CYCLE = 1'b1;
+					init_state <= 3;
+				end
+			end
+			3: begin
+				if (SBUSY) begin 
+					WRITE_COMMAND = 0;
+					init_state <= 4;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			4: begin
+				if (~SBUSY) begin 
+					INSTR = 8'b0011_XXXX;
+					DELAY = 28'hFA2; //28 разрядный регистр, мин зад. 100мкс, такт 25 нс, => 4000 такта = FA0 +2 в запас
+					ONE_CYCLE = 1'b1;
+					init_state <= 5;
+				end
+			end
+			5: begin				
+				if (SBUSY) begin 
+					WRITE_COMMAND = 0;
+					init_state <= 6;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			// переключаем в 4-битный режим
+			6: begin
+				if (~SBUSY) begin
+					INSTR = 8'b0010_XXXX; 
+					DELAY = 28'h620; //28 разрядный регистр, мин зад. 39мкс, такт 25 нс, => 1560 такта = 618 +2 в запас
+					ONE_CYCLE = 1'b1;
+					init_state <= 7;
+				end
+			end
+			7: begin					
+				if (SBUSY) begin
+					WRITE_COMMAND = 0;
+					init_state <= 8;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			// определяем количество строк(2) и шрифт дисплея(5х8 точек)
+			8: begin
+				if (~SBUSY) begin
+					INSTR = 8'b0010_1000;
+					DELAY = 28'h620; //28 разрядный регистр, мин зад. 39мкс, такт 25 нс, => 1560 такта = 618 +2 в запас
+					ONE_CYCLE = 1'b0;
+					init_state <= 9;
+				end
+			end
+			9: begin					
+				if (SBUSY) begin
+					WRITE_COMMAND = 0;
+					init_state <= 10;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			// включаем дисплей, выключаем курсор и его мигание
+			10: begin
+				if (~SBUSY) begin
+					INSTR = 8'b0000_1100;
+					DELAY = 28'h620; //28 разрядный регистр, мин зад. 39мкс, такт 25 нс, => 1560 такта = 618 +2 в запас
+					ONE_CYCLE = 1'b0;
+					init_state <= 11;
+				end
+			end
+			11: begin
+				if (SBUSY) begin
+					WRITE_COMMAND = 0;
+					init_state <= 12;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			// очищаем дисплей
+			12: begin
+				if (~SBUSY) begin
+					INSTR = 8'b0000_0001;
+					DELAY = 28'hEF12; //28 разрядный регистр, мин зад. 1.53мс, такт 25 нс, => 61200 такта = EF10 +2 в запас
+					ONE_CYCLE = 1'b0;
+					init_state <= 13;
+				end
+			end
+			13: begin				
+				if (SBUSY) begin
+					WRITE_COMMAND = 0;
+					init_state <= 14;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			// выбор режим сдвига курсора вправо при записи в(чтении из) DDRAM
+			14: begin
+				if (~SBUSY) begin
+					INSTR = 8'b0000_0110;
+					DELAY = 28'h620; //28 разрядный регистр, мин зад. 39мкс, такт 25 нс, => 1560 такта = 618 +2 в запас
+					ONE_CYCLE = 1'b0;
+					init_state <= 15;
+				end
+			end
+			15: begin				
+				if (SBUSY) begin
+					WRITE_COMMAND = 0;
+					lcd_state <= 1;					
+				end
+				else WRITE_COMMAND = 1;
+			end
+			default: init_state <= 0;
+			endcase
+		1: // EXECUTING COMMANDS
+			case (exec_state)
+			// Смещаем указатель RAM на верхнюю строку
+			0: begin
+				if (~SBUSY) begin
+					INSTR = 8'b1000_0000;
+					DELAY = 28'h620;
+					ONE_CYCLE = 1'b0;
+					exec_state <= 1;
+				end
+				IBUSY<=1;
+			end
+			1: begin				
+				if (SBUSY) begin
+					WRITE_COMMAND = 0;
+					exec_state <= 2;
+				end
+				else WRITE_COMMAND = 1;					
+			end 
+			// Запись в lcd_DRAM верхней строки
+			2: begin
+				if (~SBUSY) begin
+					INSTR[7:0] = 8'h00;
+					STR[319:192] = str_up;
+					REFRESH = 1; 
+					exec_state <= 3;
+				end
+			end
+			3: begin
+				if (SBUSY) begin
+					STR[319:192] = str_up;
+					REFRESH  = 0; 
+					exec_state <= 4;	 
+				end
+				else REFRESH = 1; 
+			end
+			//Смещаем указатель RAM на нижнюю строку
+			4: begin
+				if (~SBUSY) begin
+					INSTR = 8'b1100_0000;
+					DELAY = 28'h620; //28 ?ac?yaiue ?aaeno?, iei caa. 39ien, oaeo 25 in, => 1560 oaeoa = 618 +2 a caian
+					ONE_CYCLE = 1'b0;
+					exec_state <= 5;
+				end
+			end
+			5: begin				
+				if (SBUSY) begin 
+					WRITE_COMMAND = 0;
+					exec_state <= 6;
+				end
+				else WRITE_COMMAND = 1;
+			end
+			// Запись lcd_DRAM нижней строки
+			6: begin
+				if (~SBUSY) begin
+					INSTR[7:0] = 8'h00;
+					STR[319:192] = str_down;
+					REFRESH = 0; 
+					exec_state <= 7;
+				end
+			end
+			7: begin
+				if (SBUSY) begin
+					STR[319:192] = str_down;
+					REFRESH  = 0;
+					exec_state <= 10;
+				end
+				else REFRESH = 1;	
+			end							
+			10: begin//ждем сигнала от блока управления
+				if (~SBUSY) begin
+					exec_state <= 10;
+					IBUSY<=0;
+					if (EW != prev_but) begin
+						exec_state <= 0;//если менять направление только, то на 8 состояние прыгать. Если строки, то 2.
+					end
+					prev_but=EW;//запоминаем предыдущее состояние кнопки, чтобы не прыгало
+				end
+			end
+			
+			default: exec_state <= 0;
+			endcase
+		default: lcd_state <= 0;
+		endcase
+end
+endmodule
