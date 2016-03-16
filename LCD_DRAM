@@ -1,0 +1,83 @@
+module lcd_DRAM_verilog (
+	input [319:0] STR,			//строка для вывода
+	input REFRESH,				//обновление строки в LCD DRAM в зависимости от POSITION
+	input SBUSY,				//(slave busy) сигнал занятости подчиненного устройства
+	input CLK,					// 10Mhz
+	output reg START_ACTION = 0,//сигнал запуска lcd_loader
+	output reg [7:0] DATA = 0,	//инструкция LCD контроллеру
+	output reg BUSY = 0,		//запуск процесса загрузки команды в LCD
+	output reg REG_SELECT = 0,	//флаг выбор регистра - переключает между записью команд и записью данных в память
+	output reg ONE_CYCLE = 0	//(1) 4- или (0) 8-бит данных
+);
+//Автомат записи строк в память контроллера LCD
+reg   [319:0] str_temp = 0;
+reg   [319:0] str_high = 0;
+reg   [319:0] str_low = 0;
+reg   [3:0] echo_state = 0;
+reg   [1:0] load_state = 0;
+reg   [6:0] char_cnt = 0;
+reg   [20:0] echo_delay = 0;
+
+always @(posedge CLK) 
+
+begin	
+case (echo_state)
+	0: begin
+		REG_SELECT = 0;
+		char_cnt   = 0;
+		echo_delay = 0;
+		START_ACTION = 0;
+		DATA[7:0] = 8'h00;
+		if (REFRESH) echo_state <= 1;		
+	end
+	1: begin
+		BUSY = 1;
+		REG_SELECT = 1;
+		str_temp = REFRESH ? str_high : str_low; 
+		ONE_CYCLE = 0;
+		echo_state <= 2;
+	end
+	//начало рабочего цикла
+	2: begin
+		DATA[7:0] = str_temp[319:312];
+		echo_delay = 0;
+		echo_state <= 3;
+	end
+	3: begin
+		if (~SBUSY) begin 
+			START_ACTION = 1;
+		end
+		else begin 
+			str_temp = {str_temp[311:0], str_temp[319:312]};
+			START_ACTION = 0;
+			echo_state <= 4;
+		end
+	end
+	4: begin
+		if (~SBUSY) begin
+			echo_delay = echo_delay + 1'b1;
+			if (echo_delay == 21'h6BA) begin //задержка 43мкс, 1720, 6B8+2
+				if (char_cnt == 39) begin 
+					BUSY = 0;
+					echo_state <= 0;
+				end
+				else begin
+					char_cnt = char_cnt + 1'b1;
+					echo_state <= 2;
+				end
+			end
+		end
+	end	
+	default: echo_state <= 0;
+endcase
+case (load_state)
+	0: begin 
+		if (REFRESH) begin 
+		str_high = STR;
+		end 
+		else str_low = STR;
+		load_state <= 0;
+	end
+	default: load_state <= 0;
+endcase
+	end endmodule
