@@ -1,0 +1,73 @@
+module lcd_loader_verilog (
+	input CLK,					// 10Mhz
+	input REG_SELECT,			//флаг выбор регистра - переключает между записью команд и записью данных в память		
+	input START_ACTION,			//сигнал запуска lcd_loader
+	input ONE_CYCLE,			//(1) 4- или (0) 8-битная команда (данные)	
+	input [7:0] INSTR_DATA,		//инструкция/команда LCD контроллеру от вышестоящих устройств
+	inout reg [3:0] DATA_OUT,	//4-х битный двунаправленный канал связи с контроллером LCD
+	output reg BUSY = 0,		//запуск процесса загрузки команды в LCD
+	output reg RW = 0,			//флаг чтения/записи из двунаправленного канала связи с контроллером LCD	
+	output reg RS = 0,			//флаг выбор регистра - переключает между записью команд и записью данных в память	
+	output reg E = 0			//старт бит при пересылки команд и данных в контроллер	);
+//блок lcd_loader
+reg first_cycle; 				//флаг первого цикла - если 1, то идёт загрузка первой части команды (данных)
+reg [5:0] epw = 6'h00;	 		//задержка, организующая нужную длительность сигнала Е
+reg [2:0] proc_state = 3'h0; 	//автомат - реализует логику работы блока
+reg [5:0] delay_proc = 6'h00; 	//задержка, организующая ожидания установки данных на выходных контактах (RS, RW)
+
+always @(posedge CLK) 
+begin
+
+case (proc_state)
+	0: begin 
+		BUSY = 0;
+		RW = 1'b0; //всегда пишем и не читаем
+		epw = 6'h00;
+		RS = 0;
+		E = 0;
+		DATA_OUT = 4'bZZZZ;
+		delay_proc = 6'h00;
+		if (START_ACTION) proc_state <= 1;
+	end
+	1: begin
+		BUSY = 1;
+		first_cycle = 1;
+		RS = REG_SELECT;
+		proc_state <= 2;
+	end
+	2: begin
+		delay_proc = delay_proc + 1'b1;
+		if (delay_proc == 60) begin //задержка, организующая ожидания установки данных на выходных контактах (RS, RW)
+//			delay_proc = 0;
+			proc_state <= 3; 
+		end
+	end
+	3: begin
+		E = 1;
+		DATA_OUT[3:0] = (first_cycle) ? INSTR_DATA[7:4] : INSTR_DATA[3:0];
+		proc_state <= 4;
+	end
+	4: begin
+		//выдерживаем длительность высокого уровня сигнала Е = min 230 ns
+		epw = epw + 1'b1;
+		if (epw == 25) begin //625 ns
+			epw = 0;
+			E = 0;
+			proc_state <= 5;
+		end
+	end
+	5: begin
+		//выдерживаем длительность низкого уровня сигнала Е = min 230 ns
+		epw = epw + 1'b1;
+		if (epw == 25) begin //625 ns
+			epw = 0;			
+			if ((ONE_CYCLE) || (~ONE_CYCLE && ~first_cycle)) proc_state <= 0;
+			else if (~ONE_CYCLE && first_cycle) begin
+				first_cycle = 0; //первая половина команды/данных отправлена
+				proc_state <= 3;
+			end
+		end			
+	end
+	default: proc_state <= 0;
+	endcase
+end endmodule
