@@ -1,0 +1,63 @@
+module receiver_verilog(
+	input CLK,		// входной тактовый сигнал с частотой 40 МГц и периодом 25нс
+	input TXD,					// линия приема данных c RS232
+	input RECEIVE,	// управляющий сигнал - начать прием байта по RS232
+	input SRESET,				// сигнал сброса ведомого устройства  
+	input NEG_EDGE,				// сигнал обнаружения среза (заднего фронта) сигнала на линии txd
+	output [7:0] BYTE,			// выдача принятого байта
+	output reg RESET, 			// сброс ведомых устройств (для вывода их из режима ожидания байта по RS232)
+	output reg BUSY 			// сигнал занятости текущего устройства (0-свободен, 1-занят)
+	);
+	
+parameter BAUD = 347; 			// выбор делителя частоты для скорости ~115273 (для скорости 115200)
+reg [2:0] state = 0; 			// автомат приема байта по RS232
+reg [8:0] delay = 0; 			// регистр задержки для выработки нужной частоты
+reg [7:0] data = 0; 			// внутренний регистр для приема байта
+reg [3:0] cnt_bit = 0; 			// счетчик отсылаемых бит
+assign BYTE = data; //связь выхода с внутренним регистром
+always @(posedge CLK)
+begin
+	if (SRESET == 1) state = 0;
+	//автомат приема байт по RS232
+	case (state)
+		0: begin
+			BUSY = 0;
+			RESET = 1;
+			delay = 0;
+			cnt_bit = 0;
+			if (SRESET == 0 && RECEIVE == 1) state = 1;
+		end
+		1: begin
+			BUSY = 1;
+			RESET = 0;
+			if (NEG_EDGE == 1) state = 2;
+		end
+		2: begin //проверка нулевого уровня старт-бита
+			if (delay >= BAUD/2) 
+				if (TXD == 0) begin
+					delay = 0;
+					state = 3;
+				end
+				else state = 0;
+			else delay = delay + 9'd1;
+		end
+		3: begin
+			if (delay >= BAUD) begin
+				delay = 0;
+				cnt_bit = cnt_bit + 4'd1;
+				data = {TXD, data[7:1]};
+				state = 4;
+			end
+			else delay = delay + 9'd1;
+		end
+		4: begin
+			if (cnt_bit < 8) state = 3;
+			else if (delay >= (BAUD)) begin //ожидаем стоп бита
+				delay = 0;
+				BUSY = 0;
+			end
+			else delay = delay + 9'd1;
+		end
+	endcase
+end
+endmodule
