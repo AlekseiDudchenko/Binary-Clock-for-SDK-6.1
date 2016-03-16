@@ -1,0 +1,38 @@
+module txd_neg_edge_verilog(
+	input CLK,		// входной тактовый сигнал с частотой 40МГц и периодом 25нс
+	input TXD,					// линия приема данных с RS232
+	input SBUSY,	// сигнал занятости подчиненного устройства (0-свободен, 1-занят)
+	input SRESET,				// управляющий сигнал сброса
+	output reg NEG_EDGE			// вырабатываемый сигнал обнаружения среза (заднего фронта) сигнала на линии TXD);
+reg [3:0] intgr = 0; 		// регистр для обнаружения среза (заднего фронта) сигнала посылаемого по RS232
+reg [1:0] state = 0;		// регистр для определения среза (заднего фронта) сигнала
+reg eflag = 0; 	// флаг, показывающий был ли обнаружен единичный уровень на линии TXD
+always @(posedge CLK)
+
+begin
+	if (SRESET == 1) state = 0; //организация сброса
+		case (state)
+		0: begin
+			NEG_EDGE = 0;
+			eflag = 0;
+			intgr = 0;
+			if (SRESET == 0 && SBUSY == 1) state = 1;
+		end
+		1: begin
+			if (TXD == 1 && intgr < 15) intgr = intgr + 4'd1;
+			if (TXD == 0 && intgr > 0) intgr = intgr - 4'd1;
+			state = 2;
+		end
+		2: begin
+			if (intgr == 15) begin 
+				eflag = 1;
+				state = 1;
+			end
+			else if (intgr == 0 && eflag == 1) state = 3;
+				 else state = 1;
+		end
+		3: begin	NEG_EDGE = 1;
+		end
+		default: state = 0;
+	endcase
+end endmodule
