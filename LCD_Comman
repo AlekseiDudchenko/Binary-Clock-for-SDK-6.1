@@ -1,0 +1,44 @@
+module lcd_command_verilog (
+	input  CLK,					// 40Mhz 25 ns
+	input  SBUSY,	//сигнал занятости подчиненного устройства
+	input  WRITE_COMMAND,	//запуск процесса загрузки команды в LCD
+	input  [27:0] DELAY,		//задержка между инструкциями
+	output reg START_ACTION = 0,//сигнал запуска lcd_loader
+	output reg BUSY = 0,	//запуск процесса загрузки команды в LCD
+	output reg REG_SELECT = 0	);
+reg   [2:0] command_state;
+reg   [27:0] delay_command; 
+
+always @(posedge CLK) 
+
+begin
+	case (command_state)
+	0: begin
+		BUSY = 0;
+		START_ACTION = 0;
+		delay_command = 0;
+		if (WRITE_COMMAND) command_state <= 1;
+	end	
+	1: begin
+		BUSY = 1;
+		REG_SELECT = 0;
+		command_state <= 2;
+	end
+	2: begin
+		if (~SBUSY) begin 
+			START_ACTION = 1;
+		end
+		else begin 
+			START_ACTION = 0;
+			command_state <= 3;
+		end
+	end
+	3: begin
+		if (~SBUSY) begin
+			delay_command = delay_command + 1'b1;
+			if (delay_command == DELAY) command_state <= 0;
+		end
+	end
+	default: command_state <= 0;
+	endcase	
+end endmodule
